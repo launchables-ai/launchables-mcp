@@ -1,0 +1,32 @@
+# Publish to npm when a version tag is pushed (git tag v0.1.1 && git push origin v0.1.1), as in launchables-sdk: trusted
+# publishing (no token) through the "npm" environment, which may only stage a release; it goes live when Charlie approves
+# it on npmjs.com (Staged Packages), with his two-factor check. Actions pinned to release commits.
+# The first version (0.1.0) is published by hand, because npm's trusted publisher is set on a package that already exists.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  npm:
+    runs-on: ubuntu-24.04
+    environment: npm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Tag matches the package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          src=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' src/version.ts)
+          echo "tag $tag, package $pkg, source $src"
+          test "$tag" = "$pkg" && test "$tag" = "$src"
+      - name: Build, test and stage with provenance
+        # npm 12.2.0 for "npm stage publish"; it signs in to npm through GitHub's OIDC token (trusted publishing)
+        run: npm ci && npm test && npx --yes npm@12.2.0 stage publish --provenance --access public

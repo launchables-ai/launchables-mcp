@@ -1,0 +1,58 @@
+{
+  "name": "launchables-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for the Launchables Decision API: calibrated decisions from Myles as a tool for agents",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "launchables-mcp": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/config.test.js test/server.test.js test/stdio.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "launchables",
+    "myles",
+    "mcp",
+    "model-context-protocol",
+    "decision",
+    "agents"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "launchables": "0.7.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/launchables-ai/launchables-mcp.git"
+  },
+  "homepage": "https://www.launchables.ai/docs",
+  "bugs": {
+    "url": "https://github.com/launchables-ai/launchables-mcp/issues"
+  }
+}
