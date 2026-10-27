@@ -29,7 +29,7 @@ const questionSchema = z.object({
     .union([z.array(z.string().min(1)), z.record(z.string(), z.string().nullable())])
     .optional()
     .describe(
-      'choice: a list of labels, or {label: description}. score: a list of level descriptions, lowest first. noul (optional): {"true": "what yes means", "false": "what no means"}.',
+      'Required for choice and score. choice: a list of labels, or {label: description}. score: a list of level descriptions, lowest first. noul (optional): {"true": "what yes means", "false": "what no means"}.',
     ),
   threshold: z.number().min(0.5).max(1).optional().describe("This question's own threshold, overriding the call's."),
 });
