@@ -214,6 +214,8 @@ function finish(out: DecideOutput, warnings: string[]): DecideOutput {
 export async function decide(client: Launchables, input: DecideInput, defaults: Defaults): Promise<DecideOutput> {
   const names = Object.keys(input.questions);
   if (names.length === 0) throw new ToolInputError("questions must hold at least one question");
+  // a plain object cannot hold "__proto__" as its own key, so that name could not round-trip to the API and back
+  if (names.includes("__proto__")) throw new ToolInputError('"__proto__" cannot be a question name; choose another');
   const limits = thresholds(input, defaults);
   const model = input.model ?? defaults.model;
   const questions = apiQuestions(input.questions);
@@ -226,7 +228,7 @@ export async function decide(client: Launchables, input: DecideInput, defaults: 
   const warnings: string[] = [];
   const out: DecideOutput = { model: res.model, escalate: false, answers: {}, usage: res.usage };
   for (const name of names) {
-    const answer = res.answers[name];
+    const answer = Object.hasOwn(res.answers, name) ? res.answers[name] : undefined;
     if (!answer) throw new ToolInputError(`the API returned no answer for question "${name}"`);
     out.answers[name] = shapeAnswer(answer, input.questions[name] as QuestionInput, limits[name] as number);
   }
@@ -301,7 +303,7 @@ async function decideChunked(
     let best = -1;
     let at = 0;
     results.forEach((res, i) => {
-      const a = res.answers[name];
+      const a = Object.hasOwn(res.answers, name) ? res.answers[name] : undefined;
       if (a?.type !== "noul") throw new ToolInputError(`the API returned no yes/no answer for question "${name}"`);
       if (a.noul > best) {
         best = a.noul;

@@ -225,6 +225,21 @@ test("decide: bad input is refused before anything is sent", async () => {
   assert.equal(calls.length, 0);
 });
 
+test("decide: a question named __proto__ is refused, and nothing is sent", async () => {
+  const { mcp, calls } = await connect([]);
+  const args = JSON.parse('{"state": "s", "questions": {"__proto__": {"type": "noul", "instructions": "A?"}}}');
+  const r = await call(mcp, "decide", args);
+  assert.equal(r.isError, true);
+  assert.equal(calls.length, 0);
+});
+
+test("decide: an answer missing from the response is an error, not an inherited property", async () => {
+  const { mcp } = await connect([answered({ other: { type: "noul", noul: 0.9 } })]);
+  const r = await call(mcp, "decide", { state: "s", questions: { constructor: { type: "noul", instructions: "A?" } } });
+  assert.equal(r.isError, true);
+  assert.match(r.data.error.message, /no answer for question "constructor"/);
+});
+
 test("windows cover the text with the overlap", () => {
   assert.deepEqual(windows(10, 20, 5), [[0, 10]]);
   assert.deepEqual(windows(25, 10, 2), [[0, 10], [8, 18], [16, 25]]);
