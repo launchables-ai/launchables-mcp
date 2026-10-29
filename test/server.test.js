@@ -41,7 +41,7 @@ async function call(mcp, name, args = {}) {
   return { ...r, data: JSON.parse(text) };
 }
 
-const answered = (answers, extra = {}) => [200, { model: "myles-g-12b-20261017", answers, usage: { input_tokens: 100, output_tokens: 1 }, ...extra }];
+const answered = (answers, extra = {}) => [200, { model: "myles-g-12b-20261029", answers, usage: { input_tokens: 100, output_tokens: 1 }, ...extra }];
 
 test("lists the three tools with schemas and descriptions", async () => {
   const { mcp } = await connect([]);
@@ -66,7 +66,7 @@ test("decide: yes/no above the threshold acts; sends model, bearer key and an id
   assert.equal(a.cleared_threshold, true);
   assert.equal(a.escalate, false);
   assert.equal(r.data.escalate, false);
-  assert.equal(r.data.model, "myles-g-12b-20261017");
+  assert.equal(r.data.model, "myles-g-12b-20261029");
   assert.deepEqual(r.structuredContent, r.data);
   const c = calls[0];
   assert.equal(c.url, `${BASE}/v1/decide`);
