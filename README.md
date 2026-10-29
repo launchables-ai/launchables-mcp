@@ -124,7 +124,7 @@ Result (illustrative numbers):
 
 ```json
 {
-  "model": "myles-g-12b-20261017",
+  "model": "myles-g-12b-20261029",
   "escalate": false,
   "answers": {
     "refund": {
