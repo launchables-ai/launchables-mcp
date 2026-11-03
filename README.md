@@ -25,7 +25,7 @@ Add this to `claude_desktop_config.json` (Settings, Developer, Edit Config), the
   "mcpServers": {
     "launchables": {
       "command": "npx",
-      "args": ["-y", "launchables-mcp@0.1.0"],
+      "args": ["-y", "launchables-mcp@0.1.1"],
       "env": {
         "LAUNCHABLES_API_KEY": "launchables_..."
       }
@@ -37,7 +37,7 @@ Add this to `claude_desktop_config.json` (Settings, Developer, Edit Config), the
 ### Claude Code
 
 ```bash
-claude mcp add launchables -e LAUNCHABLES_API_KEY=launchables_... -- npx -y launchables-mcp@0.1.0
+claude mcp add launchables -e LAUNCHABLES_API_KEY=launchables_... -- npx -y launchables-mcp@0.1.1
 ```
 
 To share the setup with a team through a project's `.mcp.json`, keep the key out of the file and let each person's environment supply it:
@@ -47,7 +47,7 @@ To share the setup with a team through a project's `.mcp.json`, keep the key out
   "mcpServers": {
     "launchables": {
       "command": "npx",
-      "args": ["-y", "launchables-mcp@0.1.0"],
+      "args": ["-y", "launchables-mcp@0.1.1"],
       "env": { "LAUNCHABLES_API_KEY": "${LAUNCHABLES_API_KEY}" }
     }
   }
@@ -56,7 +56,7 @@ To share the setup with a team through a project's `.mcp.json`, keep the key out
 
 ### Other MCP clients
 
-Any client that starts a stdio server can run it. The command is `npx -y launchables-mcp@0.1.0` (or `launchables-mcp` after `npm install -g launchables-mcp`), with the configuration below in its environment. Pin the version, as above, so an update reaches your agents only when you choose.
+Any client that starts a stdio server can run it. The command is `npx -y launchables-mcp@0.1.1` (or `launchables-mcp` after `npm install -g launchables-mcp`), with the configuration below in its environment. Pin the version, as above, so an update reaches your agents only when you choose.
 
 ## Configuration
 
@@ -65,8 +65,23 @@ Any client that starts a stdio server can run it. The command is `npx -y launcha
 | `LAUNCHABLES_API_KEY` | required | Your API key. `LAUNCHABLES_API_TOKEN`, the name the Launchables SDKs use, works too. |
 | `LAUNCHABLES_BASE_URL` | `https://api.launchables.ai` | Set it to your own address for a self-hosted deployment. Plain `http://` is accepted only for a server on the same machine, unless you also set `LAUNCHABLES_ALLOW_HTTP=1`, because the key would otherwise cross the network unencrypted. |
 | `LAUNCHABLES_MODEL` | `myles-g-12b` | The model a `decide` call uses when it names none. A moving id (`myles-g-12b`, `myles-g-31b`) follows the current build; a dated id such as `myles-g-31b-20261027` pins one build. |
-| `LAUNCHABLES_THRESHOLD` | `0.9` | The probability a pick must reach to act without a person, from 0.5 to 1. A call or a single question can set its own. |
-| `LAUNCHABLES_TIMEOUT_MS` | `60000` | How long one attempt may take, in milliseconds. |
+| `LAUNCHABLES_THRESHOLD` | `0.9` | The probability a pick must reach to act without a person, from 0.5 to 1. A call or a single question can set its own, unless `LAUNCHABLES_LOCK_THRESHOLD` is on. |
+| `LAUNCHABLES_LOCK_MODEL` | `0` | Set to `1` to make every call use `LAUNCHABLES_MODEL`. The agent is no longer offered a `model` argument, and a call that sends one anyway is refused with an error of type `setting_locked`. |
+| `LAUNCHABLES_LOCK_THRESHOLD` | `0` | Set to `1` to make every answer use `LAUNCHABLES_THRESHOLD`. The agent is no longer offered `threshold` (for the call or for a question), and a call that sends one anyway is refused with an error of type `setting_locked`. |
+| `LAUNCHABLES_TIMEOUT_SECONDS` | `25` | The most one tool call may take in all, every attempt and the waits between retries included, from 1 to 600 seconds. Past it the call ends with an error of type `timeout` and nothing more is sent for it. The default suits hosts that stop a tool call after 30 seconds; raise it if yours allows longer. |
+| `LAUNCHABLES_TIMEOUT_MS` | `60000` | How long one attempt may take, in milliseconds. `LAUNCHABLES_TIMEOUT_SECONDS` still limits the call as a whole. |
+
+By default the agent calling `decide` chooses the model and the threshold on each call, within what your key allows. To keep those decisions with the operator rather than the agent, set `LAUNCHABLES_LOCK_MODEL=1` and `LAUNCHABLES_LOCK_THRESHOLD=1`, for example:
+
+```json
+"env": {
+  "LAUNCHABLES_API_KEY": "${LAUNCHABLES_API_KEY}",
+  "LAUNCHABLES_MODEL": "myles-g-31b",
+  "LAUNCHABLES_THRESHOLD": "0.95",
+  "LAUNCHABLES_LOCK_MODEL": "1",
+  "LAUNCHABLES_LOCK_THRESHOLD": "1"
+}
+```
 
 The server never logs your key, your states, your questions or the answers. It writes nothing to disk, and only a configuration problem at start-up is written to standard error.
 
@@ -80,9 +95,11 @@ Asks Myles one or more questions about one situation.
 | --- | --- |
 | `state` | The situation: text, or a JSON object. Put the rule or policy in it with the case. |
 | `questions` | Questions under names you choose. Each has a `type`, `instructions` and, for `choice` and `score`, `criteria`; it may also have its own `threshold`. |
-| `model` | Optional. A model id from `list_models`. |
-| `threshold` | Optional. The probability a pick must reach for this call. |
+| `model` | Optional. A model id from `list_models`. Not offered when `LAUNCHABLES_LOCK_MODEL` is on. |
+| `threshold` | Optional. The probability a pick must reach for this call. Not offered when `LAUNCHABLES_LOCK_THRESHOLD` is on. |
 | `chunk`, `chunk_chars`, `chunk_overlap_chars` | Optional. Read a long text in overlapping windows (below). |
+
+Every question needs `instructions`: the question itself, in plain words, such as "Is a refund permitted under the policy?". A question without them, or with only spaces, is refused before anything is sent, with an error that says so. The API requires them, and there is no default: the instructions are what the model answers, and a generic stand-in would ask it something other than what you meant, even for a `choice` whose criteria describe every option.
 
 The question types:
 
@@ -160,7 +177,7 @@ For a yes/no check that must cover the whole of a long text (does any part of th
 
 ## Errors
 
-A failed call returns a tool error whose `error` has a `message` written for the agent, the API's `type` and `status`, and `retryable`. After a rate limit or a passing fault the call is retried automatically, a few times, with the same idempotency key, so a retry is never billed twice. Some cases to know:
+A failed call returns a tool error whose `error` has a `message` written for the agent, the API's `type` and `status`, and `retryable`. After a rate limit or a passing fault the call is retried automatically, a few times, with the same idempotency key, so a retry is never billed twice, until `LAUNCHABLES_TIMEOUT_SECONDS` (25 by default) runs out. Some cases to know:
 
 | Case | What the agent is told |
 | --- | --- |
@@ -169,6 +186,9 @@ A failed call returns a tool error whose `error` has a `message` written for the
 | `410` `model_retired` | The build was retired; `successor` names the model to use instead. |
 | `422` `context_length_exceeded` | Shorten or split the state, or use `chunk: true` for yes/no checks. |
 | `429` | Rate limited after retries; wait the seconds given. |
+| `timeout` | The call ran past `LAUNCHABLES_TIMEOUT_SECONDS`; try again shortly, or send a shorter state or fewer chunk windows. An attempt the API had already answered may still be billed. |
+| `setting_locked` | The call set a model or threshold that the operator has fixed; call again without it. |
+| `invalid_input` | The call was refused before anything was sent, for example a question without `instructions`. |
 
 ## Development
 

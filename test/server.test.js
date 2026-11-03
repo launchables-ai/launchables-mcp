@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Launchables } from "launchables";
-import { createServer, loadConfig, windows, VERSION } from "../dist/index.js";
+import { createServer, loadConfig, windows, VERSION, deadlineFetch, deadlineSleep } from "../dist/index.js";
 
 const KEY = "launchables_test_secret_key";
 const BASE = "https://example.test";
@@ -23,10 +23,13 @@ function mockFetch(script) {
   return { fetch, calls };
 }
 
-async function connect(script, env = {}) {
-  const config = loadConfig({ LAUNCHABLES_API_KEY: KEY, LAUNCHABLES_BASE_URL: BASE, ...env });
+async function connect(script, env = {}, overrides = {}) {
+  const config = { ...loadConfig({ LAUNCHABLES_API_KEY: KEY, LAUNCHABLES_BASE_URL: BASE, ...env }), ...overrides.config };
   const { fetch, calls } = mockFetch(script);
-  const client = new Launchables({ apiKey: config.apiKey, baseURL: config.baseURL, fetch, sleep: async () => {}, maxRetries: 1 });
+  const client = new Launchables({
+    apiKey: config.apiKey, baseURL: config.baseURL, maxRetries: 1,
+    fetch: overrides.fetch ? overrides.fetch(fetch) : fetch, sleep: overrides.sleep ?? (async () => {}),
+  });
   const server = createServer(client, config);
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   const mcp = new Client({ name: "test", version: "0" });
@@ -223,6 +226,117 @@ test("decide: bad input is refused before anything is sent", async () => {
   const r4 = await call(mcp, "decide", { state: "s", chunk_chars: 5000, questions: { a: { type: "noul", instructions: "A?" } } });
   assert.match(r4.data.error.message, /only with chunk/);
   assert.equal(calls.length, 0);
+});
+
+test("decide: a question without instructions is refused with a message that says what to send", async () => {
+  const { mcp, calls } = await connect([]);
+  for (const q of [{ type: "noul" }, { type: "noul", instructions: "" }]) {
+    const r = await mcp.callTool({ name: "decide", arguments: { state: "s", questions: { a: q } } });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0].text, /Every question needs instructions: the question itself/);
+  }
+  const r = await call(mcp, "decide", { state: "s", questions: { a: { type: "choice", instructions: "   ", criteria: ["x", "y"] } } });
+  assert.equal(r.isError, true);
+  assert.equal(r.data.error.type, "invalid_input");
+  assert.match(r.data.error.message, /questions\.a has no instructions/);
+  assert.equal(calls.length, 0);
+  const { tools } = await mcp.listTools();
+  const decide = tools.find((t) => t.name === "decide");
+  assert.match(decide.description, /Each needs instructions/);
+  assert.match(decide.inputSchema.properties.questions.additionalProperties.properties.instructions.description, /^Required/);
+});
+
+test("decide: unlocked, the agent is offered model and thresholds", async () => {
+  const { mcp } = await connect([]);
+  const { tools } = await mcp.listTools();
+  const schema = tools.find((t) => t.name === "decide").inputSchema;
+  assert.ok(schema.properties.model);
+  assert.ok(schema.properties.threshold);
+  assert.ok(schema.properties.questions.additionalProperties.properties.threshold);
+});
+
+test("decide: LAUNCHABLES_LOCK_MODEL hides model and refuses a call that sends one", async () => {
+  const { mcp, calls } = await connect([answered({ a: { type: "noul", noul: 0.96 } })], { LAUNCHABLES_LOCK_MODEL: "1", LAUNCHABLES_MODEL: "myles-g-31b" });
+  const { tools } = await mcp.listTools();
+  const decide = tools.find((t) => t.name === "decide");
+  assert.equal(decide.inputSchema.properties.model, undefined);
+  assert.ok(decide.inputSchema.properties.threshold, "the threshold is still offered");
+  assert.match(decide.description, /uses the model myles-g-31b, fixed/);
+  const refused = await call(mcp, "decide", { state: "s", model: "myles-g-12b", questions: { a: { type: "noul", instructions: "A?" } } });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.data.error.type, "setting_locked");
+  assert.equal(refused.data.error.retryable, false);
+  assert.match(refused.data.error.message, /fixed the model at "myles-g-31b".*without model/);
+  assert.equal(calls.length, 0);
+  const ok = await call(mcp, "decide", { state: "s", threshold: 0.8, questions: { a: { type: "noul", instructions: "A?" } } });
+  assert.equal(ok.isError, undefined);
+  assert.equal(calls[0].json.model, "myles-g-31b");
+});
+
+test("decide: LAUNCHABLES_LOCK_THRESHOLD hides the thresholds and refuses a call or question that sets one", async () => {
+  const { mcp, calls } = await connect([answered({ a: { type: "noul", noul: 0.85 } })], { LAUNCHABLES_LOCK_THRESHOLD: "1", LAUNCHABLES_THRESHOLD: "0.95" });
+  const { tools } = await mcp.listTools();
+  const decide = tools.find((t) => t.name === "decide");
+  assert.equal(decide.inputSchema.properties.threshold, undefined);
+  assert.equal(decide.inputSchema.properties.questions.additionalProperties.properties.threshold, undefined);
+  assert.ok(decide.inputSchema.properties.model, "the model is still offered");
+  assert.match(decide.description, /fixed at 0\.95/);
+  for (const args of [
+    { state: "s", threshold: 0.6, questions: { a: { type: "noul", instructions: "A?" } } },
+    { state: "s", questions: { a: { type: "noul", instructions: "A?", threshold: 0.6 } } },
+  ]) {
+    const r = await call(mcp, "decide", args);
+    assert.equal(r.isError, true);
+    assert.equal(r.data.error.type, "setting_locked");
+    assert.match(r.data.error.message, /fixed the threshold at 0\.95/);
+  }
+  assert.equal(calls.length, 0);
+  const ok = await call(mcp, "decide", { state: "s", model: "myles-g-12b", questions: { a: { type: "noul", instructions: "A?" } } });
+  assert.equal(ok.data.answers.a.threshold, 0.95);
+  assert.equal(ok.data.answers.a.escalate, true);
+});
+
+/** A fetch that answers only when its request is aborted, as a stalled server would. */
+const stalled = () => (_url, init) => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason)));
+
+test("decide: a call past LAUNCHABLES_TIMEOUT_SECONDS stops with a timeout error and sends nothing more", async () => {
+  const { mcp, calls } = await connect(() => [503, { error: "busy" }], {}, {
+    config: { totalTimeoutMs: 300, timeoutMs: 60000 },
+    // each attempt fails fast, then the wait before the retry outlasts the deadline
+    sleep: (ms) => deadlineSleep(ms * 1000),
+    fetch: (inner) => deadlineFetch(inner),
+  });
+  const started = Date.now();
+  const r = await call(mcp, "decide", { state: "s", questions: { a: { type: "noul", instructions: "A?" } } });
+  const took = Date.now() - started;
+  assert.equal(r.isError, true);
+  assert.equal(r.data.error.type, "timeout");
+  assert.equal(r.data.error.retryable, true);
+  assert.match(r.data.error.message, /0\.3 seconds/);
+  assert.match(r.data.error.message, /LAUNCHABLES_TIMEOUT_SECONDS/);
+  assert.ok(took < 2000, `ended at the deadline, took ${took} ms`);
+  const sent = calls.length;
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(calls.length, sent, "no retry is sent after the deadline");
+});
+
+test("list_models: the deadline aborts a request in flight", async () => {
+  let aborted = false;
+  const { mcp } = await connect([], {}, {
+    config: { totalTimeoutMs: 200 },
+    fetch: () => deadlineFetch((url, init) => { init.signal.addEventListener("abort", () => (aborted = true)); return stalled()(url, init); }),
+    sleep: deadlineSleep,
+  });
+  const r = await call(mcp, "list_models");
+  assert.equal(r.data.error.type, "timeout");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(aborted, true);
+});
+
+test("decide: the deadline is stated in the tool description", async () => {
+  const { mcp } = await connect([], { LAUNCHABLES_TIMEOUT_SECONDS: "12" });
+  const { tools } = await mcp.listTools();
+  assert.match(tools.find((t) => t.name === "decide").description, /longer than 12 seconds in all/);
 });
 
 test("decide: a question named __proto__ is refused, and nothing is sent", async () => {
