@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- `LAUNCHABLES_TIMEOUT_SECONDS` (default 25): the most one tool call may take in all, retries and the waits between them included. Past it the call ends with an error of type `timeout`, the request in flight is aborted and no retry is sent. Before, retries could keep a call going for over a minute, past hosts that stop a tool call after 30 seconds.
+- `LAUNCHABLES_LOCK_MODEL=1` and `LAUNCHABLES_LOCK_THRESHOLD=1` keep the model and the threshold with the operator: `decide` no longer offers `model` or `threshold` (for the call or for a question), and a call that sends one anyway is refused with an error of type `setting_locked`.
+- A question without `instructions` is still refused (the API requires them), now with a message that says what to send; the tool description and the README say so too.
+
 ## 0.1.0
 
 First release of the Launchables MCP server.

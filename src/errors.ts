@@ -7,9 +7,15 @@ import {
   PermissionDeniedError,
   RateLimitError,
 } from "launchables";
+import { DeadlineError } from "./deadline.js";
 
 /** A refusal raised by this server itself, before anything is sent (bad chunk settings, a threshold out of range). */
-export class ToolInputError extends Error {}
+export class ToolInputError extends Error {
+  /** The error type the agent sees: "invalid_input", or "setting_locked" for a setting the operator has fixed. */
+  constructor(message: string, readonly type: string = "invalid_input") {
+    super(message);
+  }
+}
 
 export interface ToolError {
   /** What went wrong and what to do about it, written for the agent reading the tool result. */
@@ -41,7 +47,17 @@ function fieldPath(body: Body): string | undefined {
  * and the server's message, never the request, so a state or a key can never appear in it.
  */
 export function toToolError(e: unknown, baseURL: string): ToolError {
-  if (e instanceof ToolInputError) return { message: e.message, type: "invalid_input", retryable: false };
+  if (e instanceof ToolInputError) return { message: e.message, type: e.type, retryable: false };
+  if (e instanceof DeadlineError) {
+    return {
+      message:
+        `The call took longer than ${e.ms / 1000} seconds in all, retries included, so it was stopped and nothing more is sent for it. ` +
+        "Try again shortly; if it keeps happening, check health, or send a shorter state or fewer chunk windows. " +
+        "An attempt the API had already answered may still be billed. The limit is LAUNCHABLES_TIMEOUT_SECONDS in this server's configuration.",
+      type: "timeout",
+      retryable: true,
+    };
+  }
   if (!(e instanceof LaunchablesError)) {
     return { message: `Unexpected error: ${e instanceof Error ? e.message : String(e)}`, type: "internal_error", retryable: false };
   }

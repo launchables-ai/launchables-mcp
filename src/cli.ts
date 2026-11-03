@@ -2,6 +2,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Launchables } from "launchables";
 import { ConfigError, loadConfig } from "./config.js";
+import { deadlineFetch, deadlineSleep } from "./deadline.js";
 import { createServer } from "./server.js";
 import { VERSION } from "./version.js";
 
@@ -18,7 +19,14 @@ async function main(): Promise<void> {
     process.stderr.write(`launchables-mcp: ${e instanceof ConfigError ? e.message : String(e)}\n`);
     process.exit(1);
   }
-  const client = new Launchables({ apiKey: config.apiKey, baseURL: config.baseURL, timeout: config.timeoutMs });
+  // the fetch and sleep honour each tool call's total deadline, so a call past it sends nothing more
+  const client = new Launchables({
+    apiKey: config.apiKey,
+    baseURL: config.baseURL,
+    timeout: config.timeoutMs,
+    fetch: deadlineFetch(),
+    sleep: deadlineSleep,
+  });
   const server = createServer(client, config);
   await server.connect(new StdioServerTransport());
 }

@@ -51,6 +51,33 @@ test("the command answers over stdio and keeps the key and the state out of its 
   assert.ok(!stderr.includes("SECRET-STATE-TEXT"), "the state is never logged");
 });
 
+test("the command stops a call that runs past LAUNCHABLES_TIMEOUT_SECONDS with a timeout error", async () => {
+  // a server that never answers
+  const api = createServer(() => {});
+  await new Promise((r) => api.listen(0, "127.0.0.1", r));
+  const { port } = api.address();
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [CLI],
+    env: { PATH: process.env.PATH ?? "", LAUNCHABLES_API_KEY: KEY, LAUNCHABLES_BASE_URL: `http://127.0.0.1:${port}`, LAUNCHABLES_TIMEOUT_SECONDS: "1" },
+    stderr: "pipe",
+  });
+  const mcp = new Client({ name: "stdio-test", version: "0" });
+  try {
+    await mcp.connect(transport);
+    const started = Date.now();
+    const r = await mcp.callTool({ name: "decide", arguments: { state: "s", questions: { flag: { type: "noul", instructions: "Flag it?" } } } });
+    const took = Date.now() - started;
+    assert.equal(r.isError, true);
+    assert.equal(JSON.parse(r.content[0].text).error.type, "timeout");
+    assert.ok(took >= 900 && took < 5000, `stopped at about one second, took ${took} ms`);
+  } finally {
+    await mcp.close();
+    api.closeAllConnections();
+    api.close();
+  }
+});
+
 test("a missing key stops the command with a clear message on stderr", () => {
   const r = spawnSync(process.execPath, [CLI], { env: { PATH: process.env.PATH ?? "" }, input: "", encoding: "utf8" });
   assert.equal(r.status, 1);

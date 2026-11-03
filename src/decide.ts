@@ -23,7 +23,16 @@ export interface DecideInput {
 export interface Defaults {
   model: string;
   threshold: number;
+  /** The operator fixed the model: a call that names one is refused. */
+  lockModel?: boolean;
+  /** The operator fixed the threshold: a call or question that sets one is refused. */
+  lockThreshold?: boolean;
 }
+
+/** Why a question needs instructions, for the tool's schema and its errors. */
+export const INSTRUCTIONS_REQUIRED =
+  "Every question needs instructions: the question itself, in plain words, such as \"Is a refund permitted under the policy?\". " +
+  "The API refuses a question without them, even when its criteria describe every option.";
 
 export interface AnswerOutput {
   type: "noul" | "choice" | "score";
@@ -195,6 +204,28 @@ async function inPool<T, R>(items: T[], limit: number, run: (item: T, index: num
   return results;
 }
 
+/** Refuses a setting the operator has fixed, naming the value every call uses. */
+function checkLocks(input: DecideInput, defaults: Defaults): void {
+  if (defaults.lockModel && input.model !== undefined) {
+    throw new ToolInputError(
+      `This server's operator has fixed the model at "${defaults.model}" (LAUNCHABLES_LOCK_MODEL), so a call cannot choose one. Call again without model.`,
+      "setting_locked",
+    );
+  }
+  if (!defaults.lockThreshold) return;
+  const set = [
+    ...(input.threshold !== undefined ? ["threshold"] : []),
+    ...Object.entries(input.questions).filter(([, q]) => q.threshold !== undefined).map(([n]) => `questions.${n}.threshold`),
+  ];
+  if (set.length > 0) {
+    throw new ToolInputError(
+      `This server's operator has fixed the threshold at ${defaults.threshold} (LAUNCHABLES_LOCK_THRESHOLD), so a call cannot set one. ` +
+        `Call again without ${set.join(", ")}.`,
+      "setting_locked",
+    );
+  }
+}
+
 function thresholds(input: DecideInput, defaults: Defaults): Record<string, number> {
   const base = input.threshold === undefined ? defaults.threshold : checkThreshold(input.threshold, "threshold");
   const out: Record<string, number> = {};
@@ -216,6 +247,12 @@ export async function decide(client: Launchables, input: DecideInput, defaults: 
   if (names.length === 0) throw new ToolInputError("questions must hold at least one question");
   // a plain object cannot hold "__proto__" as its own key, so that name could not round-trip to the API and back
   if (names.includes("__proto__")) throw new ToolInputError('"__proto__" cannot be a question name; choose another');
+  checkLocks(input, defaults);
+  for (const [name, q] of Object.entries(input.questions)) {
+    if (typeof q.instructions !== "string" || q.instructions.trim() === "") {
+      throw new ToolInputError(`questions.${name} has no instructions. ${INSTRUCTIONS_REQUIRED}`);
+    }
+  }
   const limits = thresholds(input, defaults);
   const model = input.model ?? defaults.model;
   const questions = apiQuestions(input.questions);
