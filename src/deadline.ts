@@ -25,7 +25,8 @@ export async function withDeadline<T>(ms: number, work: () => Promise<T>): Promi
       reject(e);
     }, ms);
   });
-  const running = current.run(controller.signal, work);
+  // run as an async function, so a `work` that throws before returning its promise still rejects inside the race
+  const running = current.run(controller.signal, async () => work());
   // once the deadline has answered, the abandoned work's own failure has nowhere to go
   running.catch(() => {});
   try {
@@ -35,6 +36,21 @@ export async function withDeadline<T>(ms: number, work: () => Promise<T>): Promi
   }
 }
 
+/** A signal that aborts when either does, with that one's reason. (AbortSignal.any is missing before Node.js 20.3.) */
+function either(a: AbortSignal, b: AbortSignal): AbortSignal {
+  const both = new AbortController();
+  for (const s of [a, b]) {
+    if (s.aborted) {
+      both.abort(s.reason);
+      return both.signal;
+    }
+  }
+  const stop = (s: AbortSignal) => () => both.abort(s.reason);
+  a.addEventListener("abort", stop(a), { once: true, signal: both.signal });
+  b.addEventListener("abort", stop(b), { once: true, signal: both.signal });
+  return both.signal;
+}
+
 /** A fetch that is also aborted by the deadline of the tool call it runs in. */
 export function deadlineFetch(base?: typeof fetch): typeof fetch {
   return (input, init) => {
@@ -42,7 +58,9 @@ export function deadlineFetch(base?: typeof fetch): typeof fetch {
     const deadline = current.getStore();
     if (!deadline) return doFetch(input, init);
     if (deadline.aborted) return Promise.reject(deadline.reason);
-    const signal = init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    // the caller's own signal is kept: the one in init, or else the one a Request carries
+    const own = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signal = own ? either(own, deadline) : deadline;
     return doFetch(input, { ...init, signal });
   };
 }

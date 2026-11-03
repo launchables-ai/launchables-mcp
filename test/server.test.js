@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Launchables } from "launchables";
-import { createServer, loadConfig, windows, VERSION, deadlineFetch, deadlineSleep } from "../dist/index.js";
+import { createServer, loadConfig, windows, VERSION, deadlineFetch, deadlineSleep, withDeadline } from "../dist/index.js";
 
 const KEY = "launchables_test_secret_key";
 const BASE = "https://example.test";
@@ -331,6 +331,33 @@ test("list_models: the deadline aborts a request in flight", async () => {
   assert.equal(r.data.error.type, "timeout");
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(aborted, true);
+});
+
+test("withDeadline: work that throws at once is that error, and its timer is cleared", async () => {
+  let unhandled = 0;
+  const count = () => unhandled++;
+  process.on("unhandledRejection", count);
+  try {
+    await assert.rejects(withDeadline(50, () => { throw new Error("at once"); }), /at once/);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(unhandled, 0);
+  } finally {
+    process.off("unhandledRejection", count);
+  }
+});
+
+test("deadlineFetch keeps the caller's own signal, from init or from a Request", async () => {
+  const seen = [];
+  const f = deadlineFetch(async (_input, init) => { seen.push(init.signal); return new Response("{}"); });
+  const mine = new AbortController();
+  await withDeadline(1000, async () => {
+    await f("https://example.test/a", { signal: mine.signal });
+    await f(new Request("https://example.test/b", { signal: mine.signal }));
+  });
+  assert.equal(seen.length, 2);
+  for (const s of seen) assert.equal(s.aborted, false);
+  mine.abort(new Error("mine"));
+  for (const s of seen) assert.equal(s.aborted, true);
 });
 
 test("decide: the deadline is stated in the tool description", async () => {
